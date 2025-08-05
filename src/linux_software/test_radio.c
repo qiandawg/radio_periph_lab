@@ -49,27 +49,30 @@ void play_tune(volatile unsigned int *ptrToRadio, float base_frequency)
 
 void print_benchmark(volatile unsigned int *periph_base)
 {
-    // the below code does a little benchmark, reading from the peripheral a bunch 
-    // of times, and seeing how many clocks it takes.  You can use this information
-    // to get an idea of how fast you can generally read from an axi-lite slave device
     unsigned int start_time;
     unsigned int stop_time;
-    start_time = *(periph_base+RADIO_TUNER_TIMER_REG_OFFSET);
-    for (int i=0;i<2048;i++)
-        stop_time = *(periph_base+RADIO_TUNER_TIMER_REG_OFFSET);
-    printf("Elapsed time in clocks = %u\n",stop_time-start_time);
-    float throughput=0; 
-    // please insert your code here for calculate the actual throughput in Mbytes/second
-    // how much data was transferred? How long did it take?
-    unsigned int bytes_transferred = 2048*4; // change obviously
-	float time_spent = 1; // change obviously
-	
-	time_spent = ((float)(stop_time-start_time)/ 125000000);
-	
-	throughput = ((float)bytes_transferred/time_spent)/(1024*1024);
-	
-    printf("You transferred %u bytes of data in %f seconds\n",bytes_transferred,time_spent);
-    printf("Measured Transfer throughput = %f Mbytes/sec\n",throughput);
+    start_time = *(periph_base + RADIO_TUNER_TIMER_REG_OFFSET);
+
+    for (int i = 0; i < 2048; i++)
+        stop_time = *(periph_base + RADIO_TUNER_TIMER_REG_OFFSET);
+
+    // Handle wraparound (32-bit unsigned)
+    unsigned int delta;
+    if (stop_time >= start_time) {
+        delta = stop_time - start_time;
+    } else {
+        delta = (0xFFFFFFFF - start_time) + stop_time + 1;
+    }
+
+    printf("Elapsed time in clocks = %u\n", delta);
+
+    // Throughput calculation
+    unsigned int bytes_transferred = 2048 * 4; // each read = 4 bytes
+    float time_spent = (float)delta / 125000000.0f; // 125 MHz clock
+    float throughput = ((float)bytes_transferred / time_spent) / (1024.0f * 1024.0f); // MB/s
+
+    printf("You transferred %u bytes of data in %f seconds\n", bytes_transferred, time_spent);
+    printf("Measured Transfer throughput = %f Mbytes/sec\n", throughput);
 }
 
 int main()
