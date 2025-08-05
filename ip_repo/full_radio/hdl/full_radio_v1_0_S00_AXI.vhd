@@ -119,6 +119,81 @@ architecture arch_imp of full_radio_v1_0_S00_AXI is
 	signal byte_index	: integer;
 	signal aw_en	: std_logic;
 
+    signal m_axis_tdata0, m_axis_tdata1: std_logic_vector(31 downto 0);
+    signal m_axis_tvalid0, m_axis_tvalid1: std_logic;
+    
+    signal real_dds_out: std_logic_vector(15 downto 0);
+    signal complex_dds_out: std_logic_vector(31 downto 0);
+    signal complex_mult_ADC_in: std_logic_vector(31 downto 0);
+    signal complex_mult_tuneDDS_in: std_logic_vector(31 downto 0);
+    signal complex_mult_out: std_logic_vector(79 downto 0);
+    signal complex_mult_tvalid: std_logic;
+
+    signal complex_filter_input: std_logic_vector(15 downto 0);
+    signal real_filter_input: std_logic_vector(15 downto 0); 
+    signal both_dds_tvalid: std_logic;   
+    
+    signal fir_compiler_A_tdata: std_logic_vector(39 downto 0);
+    signal fir_compiler_A_tready: std_logic;
+    signal fir_compiler_A_tvalid: std_logic;
+    
+    signal fir_compiler_B_tready: std_logic;
+    signal fir_compiler_B_tvalid: std_logic;
+    
+    signal Real_filter_out: std_logic_vector(55 downto 0);    
+    
+    signal fir_compiler_C_tdata: std_logic_vector(39 downto 0);
+    signal fir_compiler_C_tready: std_logic;
+    signal fir_compiler_C_tvalid: std_logic;
+    signal fir_compiler_D_tready: std_logic;
+    signal fir_compiler_D_tvalid: std_logic;
+    
+    signal Complex_filter_out: std_logic_vector(55 downto 0);
+    
+    signal shifted,shifted_complex: signed(55 downto 0);
+    signal real_side_sound, complex_side_sound: std_logic_vector(15 downto 0);
+    
+    signal free_run_counter: unsigned (31 downto 0);
+    signal active_high_reset,flip_aresetn: std_logic;
+    
+    
+-- FIR compiler 0  declaration
+COMPONENT fir_compiler_0
+  PORT (
+    aclk : IN STD_LOGIC;
+    s_axis_data_tvalid : IN STD_LOGIC;
+    s_axis_data_tready : OUT STD_LOGIC;
+    s_axis_data_tdata : IN STD_LOGIC_VECTOR(15 DOWNTO 0);
+    m_axis_data_tvalid : OUT STD_LOGIC;
+    m_axis_data_tready : IN STD_LOGIC;
+    m_axis_data_tdata : OUT STD_LOGIC_VECTOR(39 DOWNTO 0) 
+  );
+END COMPONENT;
+    
+-- FIR compiler 1 declaration
+COMPONENT fir_compiler_1
+  PORT (
+    aclk : IN STD_LOGIC;
+    s_axis_data_tvalid : IN STD_LOGIC;
+    s_axis_data_tready : OUT STD_LOGIC;
+    s_axis_data_tdata : IN STD_LOGIC_VECTOR(39 DOWNTO 0);
+    m_axis_data_tvalid : OUT STD_LOGIC;
+    m_axis_data_tdata : OUT STD_LOGIC_VECTOR(55 DOWNTO 0) 
+  );
+END COMPONENT;
+
+COMPONENT cmpy_0
+  PORT (
+    aclk : IN STD_LOGIC;
+    s_axis_a_tvalid : IN STD_LOGIC;
+    s_axis_a_tdata : IN STD_LOGIC_VECTOR(31 DOWNTO 0);
+    s_axis_b_tvalid : IN STD_LOGIC;
+    s_axis_b_tdata : IN STD_LOGIC_VECTOR(31 DOWNTO 0);
+    m_axis_dout_tvalid : OUT STD_LOGIC;
+    m_axis_dout_tdata : OUT STD_LOGIC_VECTOR(79 DOWNTO 0) 
+  );
+END COMPONENT;
+
 COMPONENT dds_compiler_0
   PORT (
     aclk : IN STD_LOGIC;
@@ -126,9 +201,21 @@ COMPONENT dds_compiler_0
     s_axis_phase_tvalid : IN STD_LOGIC;
     s_axis_phase_tdata : IN STD_LOGIC_VECTOR(31 DOWNTO 0);
     m_axis_data_tvalid : OUT STD_LOGIC;
-    m_axis_data_tdata : OUT STD_LOGIC_VECTOR(31 DOWNTO 0)
+    m_axis_data_tdata : OUT STD_LOGIC_VECTOR(15 DOWNTO 0) 
   );
-    END COMPONENT;
+END COMPONENT;
+
+COMPONENT dds_compiler_1
+  PORT (
+    aclk : IN STD_LOGIC;
+    aresetn : IN STD_LOGIC;
+    s_axis_phase_tvalid : IN STD_LOGIC;
+    s_axis_phase_tdata : IN STD_LOGIC_VECTOR(31 DOWNTO 0);
+    m_axis_data_tvalid : OUT STD_LOGIC;
+    m_axis_data_tdata : OUT STD_LOGIC_VECTOR(31 DOWNTO 0) 
+  );
+END COMPONENT;
+
 
 begin
 	-- I/O Connections assignments
@@ -229,7 +316,7 @@ begin
 	      slv_reg0 <= (others => '0');
 	      slv_reg1 <= (others => '0');
 	      slv_reg2 <= (others => '0');
-	      slv_reg3 <= (others => '0');
+--	      slv_reg3 <= (others => '0');
 	    else
 	      loc_addr := axi_awaddr(ADDR_LSB + OPT_MEM_ADDR_BITS downto ADDR_LSB);
 	      if (slv_reg_wren = '1') then
@@ -258,19 +345,18 @@ begin
 	                slv_reg2(byte_index*8+7 downto byte_index*8) <= S_AXI_WDATA(byte_index*8+7 downto byte_index*8);
 	              end if;
 	            end loop;
-	          when b"11" =>
-	            for byte_index in 0 to (C_S_AXI_DATA_WIDTH/8-1) loop
-	              if ( S_AXI_WSTRB(byte_index) = '1' ) then
-	                -- Respective byte enables are asserted as per write strobes                   
-	                -- slave registor 3
-	                slv_reg3(byte_index*8+7 downto byte_index*8) <= S_AXI_WDATA(byte_index*8+7 downto byte_index*8);
-	              end if;
-	            end loop;
+--	          when b"11" =>
+--	            for byte_index in 0 to (C_S_AXI_DATA_WIDTH/8-1) loop
+--	              if ( S_AXI_WSTRB(byte_index) = '1' ) then
+--	                -- Respective byte enables are asserted as per write strobes                   
+--	                -- slave registor 3
+--	                slv_reg3(byte_index*8+7 downto byte_index*8) <= S_AXI_WDATA(byte_index*8+7 downto byte_index*8);
+--	              end if;
+--	            end loop;
 	          when others =>
 	            slv_reg0 <= slv_reg0;
 	            slv_reg1 <= slv_reg1;
 	            slv_reg2 <= slv_reg2;
-	            slv_reg3 <= slv_reg3;
 	        end case;
 	      end if;
 	    end if;
@@ -398,17 +484,126 @@ begin
 
 	-- Add user logic here
 
-your_instance_name : dds_compiler_0
+your_instance_name0 : dds_compiler_0
   PORT MAP (
     aclk => s_axi_aclk,
-    aresetn => '1',
+    aresetn => flip_aresetn,
     s_axis_phase_tvalid => '1',
     s_axis_phase_tdata => slv_reg0,
-    m_axis_data_tvalid => m_axis_tvalid,
-    m_axis_data_tdata => m_axis_tdata
+    m_axis_data_tvalid => m_axis_tvalid0,
+    m_axis_data_tdata => real_dds_out
   );
+  
 
+  your_instance_name1 : dds_compiler_1
+  PORT MAP (
+    aclk => s_axi_aclk,
+    aresetn => flip_aresetn,
+    s_axis_phase_tvalid => '1',
+    s_axis_phase_tdata => slv_reg1,
+    m_axis_data_tvalid => m_axis_tvalid1,
+    m_axis_data_tdata => complex_dds_out
+  );
+  
+  
+  -- fir compiler A
+  fir_compiler_A : fir_compiler_0
+  PORT MAP (
+    aclk => s_axi_aclk,
+    s_axis_data_tvalid => '1',
+    s_axis_data_tready => fir_compiler_A_tready,
+    s_axis_data_tdata => real_filter_Input,
+    m_axis_data_tvalid => fir_compiler_A_tvalid,
+    m_axis_data_tready => fir_compiler_B_tready,
+    m_axis_data_tdata => fir_compiler_A_tdata
+  );
+  
+  -- fir compiler B
+  fir_compiler_B : fir_compiler_1
+  PORT MAP (
+    aclk => s_axi_aclk,
+    s_axis_data_tvalid => fir_compiler_A_tvalid,
+    s_axis_data_tready => fir_compiler_B_tready,
+    s_axis_data_tdata => fir_compiler_A_tdata,
+    m_axis_data_tvalid => fir_compiler_B_tvalid,
+    m_axis_data_tdata => real_filter_out
+  );
+  
+  -- fir compiler C
+  fir_compiler_C : fir_compiler_0
+  PORT MAP (
+    aclk => s_axi_aclk,
+    s_axis_data_tvalid => '1',
+    s_axis_data_tready => fir_compiler_C_tready,
+    s_axis_data_tdata => complex_filter_input,
+    m_axis_data_tvalid => fir_compiler_C_tvalid,
+    m_axis_data_tready => fir_compiler_D_tready,
+    m_axis_data_tdata => fir_compiler_C_tdata
+  );
+ 
+   -- fir compiler D
+  fir_compiler_D : fir_compiler_1
+  PORT MAP (
+    aclk => s_axi_aclk,
+    s_axis_data_tvalid => fir_compiler_C_tvalid,
+    s_axis_data_tready => fir_compiler_D_tready,
+    s_axis_data_tdata => fir_compiler_C_tdata,
+    m_axis_data_tvalid => fir_compiler_D_tvalid,
+    m_axis_data_tdata => complex_filter_out
+  );
+  
+  
+  -- complex multiplier
+ complex_mult_0 : cmpy_0
+  PORT MAP (
+    aclk => s_axi_aclk,
+    s_axis_a_tvalid => m_axis_tvalid0,
+    s_axis_a_tdata => Complex_mult_ADC_In,
+    s_axis_b_tvalid => m_axis_tvalid1,
+    s_axis_b_tdata => Complex_mult_TuneDDS_In,
+    m_axis_dout_tvalid => complex_mult_tvalid,
+    m_axis_dout_tdata => complex_mult_out
+  );
+  
+  
+  Complex_mult_ADC_In <= (31 downto 16 => '0') & real_dds_out;   -- 16384*complexmult   we shift 32->14 = 18 bits    
+  Complex_mult_TuneDDS_In <= complex_dds_out;
+  
+--  real_filter_Input <= (23 downto 18 => '0') & complex_mult_out(31 downto 14);  -- signed extend it properly
+--  Complex_filter_Input <= (23 downto 18 => '0') & complex_mult_out(71 downto 54);  -- signed extend it propely
 
+  real_filter_Input <=  complex_mult_out(29 downto 14);  -- shave to 16 bit or signed extend it properly
+  Complex_filter_Input <=  complex_mult_out(69 downto 54);  -- shave to 16 signed extend it propely
+    
+--  m_axis_tdata <= m_axis_tdata0 when (slv_reg2(0) = '1') else m_axis_tdata1;
+--  m_axis_tvalid <= m_axis_tvalid0 when (slv_reg2(0) = '1') else m_axis_tvalid1;
+
+--    -- ILA   37+15 = 52
+    shifted <= shift_right(signed(real_filter_out), 37);    
+    real_side_sound<= std_logic_vector(shifted(15 downto 0));
+    
+    shifted_complex <= shift_right(signed(complex_filter_out), 37);
+    complex_side_sound<= std_logic_vector(shifted(15 downto 0));
+--    -- processing dds compiler out
+    m_axis_tdata <= (real_side_sound & complex_side_sound);
+    m_axis_tvalid <= fir_compiler_D_tvalid and fir_compiler_B_tvalid;
+    
+    
+    active_high_reset <= slv_reg2(0);
+    flip_aresetn <= not active_high_reset;
+	-- Free running counter
+	process( S_AXI_ACLK ) is
+	begin
+	  if (rising_edge (S_AXI_ACLK)) then
+	    if ( S_AXI_ARESETN = '0' ) then
+	      free_run_counter  <= (others => '0');
+	    else
+	      free_run_counter <= free_run_counter + 1;
+	    end if;
+	  end if;
+	end process;
+	
+	slv_reg3 <= std_logic_vector(free_run_counter(31 downto 0));
 	-- User logic ends
 
 end arch_imp;
